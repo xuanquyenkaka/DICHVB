@@ -6,7 +6,21 @@ on:
 permissions:
   contents: read
 
+env:
+
+  PYTHON_VERSION: "3.10"
+
+  LLAMA_CPP_VERSION: "v0.3.25"
+
+  WHEELHOUSE: wheelhouse
+
 jobs:
+
+##############################################################################
+#
+# BUILD CPU
+#
+##############################################################################
 
   cpu:
 
@@ -16,56 +30,103 @@ jobs:
 
     steps:
 
+##############################################################################
+# CHECKOUT
+##############################################################################
+
       - name: Checkout
         uses: actions/checkout@v4
+
+##############################################################################
+# MSVC
+##############################################################################
 
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
 
+##############################################################################
+# PYTHON
+##############################################################################
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: ${{ env.PYTHON_VERSION }}
+
+##############################################################################
+# CREATE WHEELHOUSE
+##############################################################################
+
+      - name: Create wheelhouse
+        shell: cmd
+        run: |
+
+          mkdir %WHEELHOUSE%
+
+          mkdir %WHEELHOUSE%\common
+
+          mkdir %WHEELHOUSE%\cpu
+
+          mkdir %WHEELHOUSE%\cu118
+
+##############################################################################
+# CACHE PIP
+##############################################################################
 
       - name: Cache pip
         uses: actions/cache@v4
         with:
+
           path: |
             ~\AppData\Local\pip\Cache
-          key: pip-${{ runner.os }}-${{ hashFiles('**/pyproject.toml') }}
+
+          key: ${{ runner.os }}-pip-${{ env.PYTHON_VERSION }}
+
           restore-keys: |
-            pip-${{ runner.os }}-
+            ${{ runner.os }}-pip-
+
+##############################################################################
+# INSTALL BUILD TOOLS
+##############################################################################
 
       - name: Install build tools
         shell: cmd
         run: |
+
           python -m pip install --upgrade pip
+
           pip install build
+
           pip install wheel
+
           pip install cmake
+
           pip install ninja
+
           pip install scikit-build-core
 
-      - name: Show Build Environment
-        shell: cmd
-        run: |
-          python --version
-          pip --version
-          cmake --version
-          ninja --version
-          cl
+##############################################################################
+# CLONE SOURCE
+##############################################################################
 
       - name: Clone llama-cpp-python
         shell: cmd
         run: |
-          git clone --recursive --depth 1 --branch v0.3.25 https://github.com/abetlen/llama-cpp-python.git
 
-      - name: Build CPU
+          git clone ^
+            --recursive ^
+            --branch %LLAMA_CPP_VERSION% ^
+            https://github.com/abetlen/llama-cpp-python.git
+##############################################################################
+# BUILD CPU
+##############################################################################
+
+      - name: Build CPU Wheel
         shell: cmd
         working-directory: llama-cpp-python
         env:
-          FORCE_CMAKE: 1
           CMAKE_GENERATOR: Ninja
+          FORCE_CMAKE: 1
           CMAKE_ARGS: >
             -DGGML_NATIVE=OFF
             -DGGML_AVX=ON
@@ -74,20 +135,70 @@ jobs:
             -DGGML_FMA=ON
             -DGGML_AVX512=OFF
         run: |
+
           python -m build --wheel
 
-      - name: Rename CPU wheel
-        shell: powershell
-        working-directory: llama-cpp-python/dist
-        run: |
-          $wheel = Get-ChildItem *.whl | Select-Object -First 1
-          Rename-Item $wheel.Name "llama_cpp_python-0.3.25-cpu.whl"
+##############################################################################
+# VERIFY CPU WHEEL
+##############################################################################
 
-      - name: Upload CPU wheel
+      - name: Verify CPU Wheel
+        shell: cmd
+        working-directory: llama-cpp-python
+        run: |
+
+          if not exist dist (
+              echo Dist folder not found.
+              exit /b 1
+          )
+
+          dir dist
+
+##############################################################################
+# COPY CPU WHEEL
+##############################################################################
+
+      - name: Copy CPU Wheel
+        shell: powershell
+        run: |
+
+          $wheel = Get-ChildItem `
+              llama-cpp-python/dist/*.whl |
+              Select-Object -First 1
+
+          if ($null -eq $wheel)
+          {
+              throw "CPU wheel not found."
+          }
+
+          Copy-Item `
+              $wheel.FullName `
+              "${{ env.WHEELHOUSE }}/cpu/"
+
+##############################################################################
+# SHOW CPU WHEELHOUSE
+##############################################################################
+
+      - name: Show CPU Wheelhouse
+        shell: cmd
+        run: |
+
+          dir %WHEELHOUSE%\cpu
+
+##############################################################################
+# UPLOAD CPU ARTIFACT
+##############################################################################
+
+      - name: Upload CPU Wheel
         uses: actions/upload-artifact@v4
         with:
           name: llama-cpp-python-cpu
-          path: llama-cpp-python/dist/llama_cpp_python-0.3.25-cpu.whl
+          path: wheelhouse/cpu/*.whl
+##############################################################################
+#
+# BUILD CUDA 11.8
+#
+##############################################################################
 
   cuda:
 
@@ -95,117 +206,139 @@ jobs:
 
     runs-on: windows-2022
 
+    needs: cpu
+
     steps:
+
+##############################################################################
+# CHECKOUT
+##############################################################################
 
       - name: Checkout
         uses: actions/checkout@v4
 
+##############################################################################
+# MSVC
+##############################################################################
+
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
+
+##############################################################################
+# PYTHON
+##############################################################################
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: ${{ env.PYTHON_VERSION }}
+
+##############################################################################
+# CACHE PIP
+##############################################################################
 
       - name: Cache pip
         uses: actions/cache@v4
         with:
           path: |
             ~\AppData\Local\pip\Cache
-          key: pip-${{ runner.os }}-${{ hashFiles('**/pyproject.toml') }}
+          key: windows-cuda-pip-${{ env.PYTHON_VERSION }}
           restore-keys: |
-            pip-${{ runner.os }}-
-      - name: Install CUDA build tools
+            windows-cuda-pip-
+
+##############################################################################
+# INSTALL BUILD TOOLS
+##############################################################################
+
+      - name: Install build tools
         shell: cmd
         run: |
+
           python -m pip install --upgrade pip
-          pip install build
-          pip install wheel
-          pip install cmake
-          pip install ninja
+
+          pip install build wheel
+
+          pip install cmake ninja
+
           pip install scikit-build-core
 
-      - name: Install CUDA 11.8
+##############################################################################
+# INSTALL CUDA 11.8
+##############################################################################
+
+      - name: Install CUDA Toolkit
         uses: Jimver/cuda-toolkit@v0.2.21
         with:
           cuda: "11.8.0"
 
-      - name: Show CUDA Environment
-        shell: cmd
-        run: |
-          python --version
-          pip --version
-          cmake --version
-          ninja --version
-          nvcc --version
-          cl
+##############################################################################
+# CLONE
+##############################################################################
 
       - name: Clone llama-cpp-python
         shell: cmd
         run: |
-          git clone --recursive --depth 1 --branch v0.3.25 https://github.com/abetlen/llama-cpp-python.git
 
-      - name: Build CUDA
+          git clone ^
+            --recursive ^
+            --branch %LLAMA_CPP_VERSION% ^
+            https://github.com/abetlen/llama-cpp-python.git
+
+##############################################################################
+# BUILD CUDA
+##############################################################################
+
+      - name: Build CUDA Wheel
         shell: cmd
         working-directory: llama-cpp-python
         env:
-          FORCE_CMAKE: 1
           CMAKE_GENERATOR: Ninja
-          CMAKE_ARGS: >
-            -DGGML_CUDA=ON
+          FORCE_CMAKE: 1
+          CMAKE_ARGS: -DGGML_CUDA=ON
         run: |
+
           python -m build --wheel
 
-      - name: Rename CUDA wheel
-        shell: powershell
-        working-directory: llama-cpp-python/dist
-        run: |
-          $wheel = Get-ChildItem *.whl | Select-Object -First 1
-          Rename-Item $wheel.Name "llama_cpp_python-0.3.25-cu118.whl"
+##############################################################################
+# VERIFY
+##############################################################################
 
-      - name: Upload CUDA wheel
+      - name: Verify CUDA Wheel
+        shell: cmd
+        working-directory: llama-cpp-python
+        run: |
+
+          dir dist
+
+##############################################################################
+# COPY
+##############################################################################
+
+      - name: Copy CUDA Wheel
+        shell: powershell
+        run: |
+
+          $wheel = Get-ChildItem `
+            llama-cpp-python/dist/*.whl |
+            Select-Object -First 1
+
+          if ($null -eq $wheel)
+          {
+              throw "CUDA wheel not found."
+          }
+
+          mkdir wheelhouse\cu118 -Force
+
+          Copy-Item `
+            $wheel.FullName `
+            wheelhouse\cu118\
+
+##############################################################################
+# UPLOAD
+##############################################################################
+
+      - name: Upload CUDA Wheel
         uses: actions/upload-artifact@v4
         with:
           name: llama-cpp-python-cu118
-          path: llama-cpp-python/dist/llama_cpp_python-0.3.25-cu118.whl
-
-  release:
-
-    name: Create GitHub Release
-
-    needs:
-      - cpu
-      - cuda
-
-    if: startsWith(github.ref, 'refs/tags/')
-
-    runs-on: ubuntu-latest
-
-    permissions:
-      contents: write
-    steps:
-
-      - name: Download CPU Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: llama-cpp-python-cpu
-          path: release
-
-      - name: Download CUDA Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: llama-cpp-python-cu118
-          path: release
-
-      - name: Show Release Files
-        shell: bash
-        run: |
-          ls -lah release
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            release/*.whl
-          generate_release_notes: true
+          path: wheelhouse/cu118/*.whl
