@@ -1,25 +1,192 @@
-name: Test MSVC
+name: Build llama-cpp-python Wheels
 
 on:
   workflow_dispatch:
 
+  push:
+    tags:
+      - "v*"
+
+env:
+  LLAMA_CPP_VERSION: v0.3.25
+  PYTHON_VERSION: "3.11"
+
 jobs:
-  test:
+
+  ###########################################################
+  # CPU AVX2
+  ###########################################################
+
+  cpu:
+
     runs-on: windows-2022
 
     steps:
-      - uses: actions/checkout@v4
 
-      - name: Setup MSVC
-        uses: ilammy/msvc-dev-cmd@v1
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Show compiler
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\AppData\Local\pip\Cache
+          key: pip-${{ runner.os }}-${{ env.PYTHON_VERSION }}
+
+      - name: Cache CMake
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\ProgramData\chocolatey\lib\cmake
+          key: cmake-${{ runner.os }}
+
+      - name: Install Build Tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install wheel setuptools build scikit-build-core ninja cmake
+
+      - name: Clone llama.cpp
+        shell: bash
+        run: |
+          git clone https://github.com/ggerganov/llama.cpp.git
+          cd llama.cpp
+          git checkout $LLAMA_CPP_VERSION
+
+      - name: Build CPU Wheel
         shell: cmd
         run: |
-          cl
 
-      - name: Show CMake
-        run: cmake --version
+          set CMAKE_ARGS=-DLLAMA_NATIVE=OFF -DLLAMA_AVX2=ON
 
-      - name: Show Ninja
-        run: ninja --version
+          pip wheel ^
+          git+https://github.com/abetlen/llama-cpp-python.git@0.3.25 ^
+          --no-deps ^
+          -w dist
+
+      - name: Rename Wheel
+        shell: powershell
+        run: |
+          $wheel = Get-ChildItem dist\*.whl | Select-Object -First 1
+          Rename-Item $wheel.FullName "llama_cpp_python-0.3.25-cpu.whl"
+
+      - name: Upload CPU
+        uses: actions/upload-artifact@v4
+        with:
+          name: llama-cpp-python-cpu
+          path: dist/*.whl
+
+
+  ###########################################################
+  # CUDA 11.8
+  ###########################################################
+
+  cuda118:
+
+    runs-on: windows-2022
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\AppData\Local\pip\Cache
+          key: pip-cuda-${{ runner.os }}
+
+      - name: Cache CMake
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\ProgramData\chocolatey\lib\cmake
+          key: cmake-cuda-${{ runner.os }}
+
+      - name: Install Build Tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install wheel setuptools build scikit-build-core ninja cmake
+
+      - name: Install CUDA Toolkit 11.8
+        shell: powershell
+        run: |
+          choco install cuda --version=11.8.0 -y
+
+      - name: Clone llama.cpp
+        shell: bash
+        run: |
+          git clone https://github.com/ggerganov/llama.cpp.git
+          cd llama.cpp
+          git checkout $LLAMA_CPP_VERSION
+
+      - name: Build CUDA Wheel
+        shell: cmd
+        run: |
+
+          set CMAKE_ARGS=-DGGML_CUDA=ON
+
+          pip wheel ^
+          git+https://github.com/abetlen/llama-cpp-python.git@0.3.25 ^
+          --no-deps ^
+          -w dist
+
+      - name: Rename Wheel
+        shell: powershell
+        run: |
+          $wheel = Get-ChildItem dist\*.whl | Select-Object -First 1
+          Rename-Item $wheel.FullName "llama_cpp_python-0.3.25-cu118.whl"
+
+      - name: Upload CUDA
+        uses: actions/upload-artifact@v4
+        with:
+          name: llama-cpp-python-cu118
+          path: dist/*.whl
+
+
+  ###########################################################
+  # RELEASE
+  ###########################################################
+
+  release:
+
+    needs:
+      - cpu
+      - cuda118
+
+    if: startsWith(github.ref, 'refs/tags/')
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+
+      - name: Download CPU
+        uses: actions/download-artifact@v4
+        with:
+          name: llama-cpp-python-cpu
+          path: release
+
+      - name: Download CUDA
+        uses: actions/download-artifact@v4
+        with:
+          name: llama-cpp-python-cu118
+          path: release
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*.whl
