@@ -29,14 +29,14 @@ jobs:
         uses: actions/checkout@v4
 
       ########################################################################
-      # MSVC
+      # Setup MSVC
       ########################################################################
 
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
 
       ########################################################################
-      # Python
+      # Setup Python
       ########################################################################
 
       - name: Setup Python
@@ -65,12 +65,10 @@ jobs:
         shell: cmd
         run: |
           python -m pip install --upgrade pip
-          pip install build wheel
-          pip install cmake ninja
-          pip install scikit-build-core
+          pip install build wheel cmake ninja scikit-build-core
 
       ########################################################################
-      # Install CUDA 11.8
+      # Install CUDA Toolkit 11.8
       ########################################################################
 
       - name: Install CUDA Toolkit
@@ -85,10 +83,12 @@ jobs:
       - name: Verify CUDA
         shell: cmd
         run: |
+          where nvcc
           nvcc --version
+          cl
 
       ########################################################################
-      # Clone source
+      # Clone llama-cpp-python
       ########################################################################
 
       - name: Clone llama-cpp-python
@@ -100,7 +100,7 @@ jobs:
             https://github.com/abetlen/llama-cpp-python.git
 
       ########################################################################
-      # Build CUDA wheel
+      # Build CUDA Wheel
       ########################################################################
 
       - name: Build CUDA Wheel
@@ -119,17 +119,21 @@ jobs:
           python -m build --wheel
 
       ########################################################################
-      # Verify wheel
+      # Verify Wheel
       ########################################################################
 
       - name: Verify Wheel
         shell: cmd
         working-directory: llama-cpp-python
         run: |
+          if not exist dist (
+              echo Wheel build failed.
+              exit /b 1
+          )
           dir dist
 
       ########################################################################
-      # Upload artifact
+      # Upload Artifact
       ########################################################################
 
       - name: Upload CUDA Wheel
