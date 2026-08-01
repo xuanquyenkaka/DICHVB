@@ -27,6 +27,15 @@ jobs:
         with:
           python-version: "3.10"
 
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\AppData\Local\pip\Cache
+          key: pip-${{ runner.os }}-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            pip-${{ runner.os }}-
+
       - name: Install build tools
         shell: cmd
         run: |
@@ -37,10 +46,19 @@ jobs:
           pip install ninja
           pip install scikit-build-core
 
+      - name: Show Build Environment
+        shell: cmd
+        run: |
+          python --version
+          pip --version
+          cmake --version
+          ninja --version
+          cl
+
       - name: Clone llama-cpp-python
         shell: cmd
         run: |
-          git clone --recursive --branch v0.3.25 https://github.com/abetlen/llama-cpp-python.git
+          git clone --recursive --depth 1 --branch v0.3.25 https://github.com/abetlen/llama-cpp-python.git
 
       - name: Build CPU
         shell: cmd
@@ -55,16 +73,9 @@ jobs:
             -DGGML_F16C=ON
             -DGGML_FMA=ON
             -DGGML_AVX512=OFF
-      - name: Show Build Environment
-        shell: cmd
-        run: |
-          python --version
-          pip --version
-          cmake --version
-          ninja --version
-          cl
         run: |
           python -m build --wheel
+
       - name: Rename CPU wheel
         shell: powershell
         working-directory: llama-cpp-python/dist
@@ -77,14 +88,7 @@ jobs:
         with:
           name: llama-cpp-python-cpu
           path: llama-cpp-python/dist/llama_cpp_python-0.3.25-cpu.whl
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~\AppData\Local\pip\Cache
-          key: pip-${{ runner.os }}-${{ hashFiles('**/pyproject.toml') }}
-          restore-keys: |
-            pip-${{ runner.os }}-
+
   cuda:
 
     name: CUDA 11.8
@@ -104,6 +108,14 @@ jobs:
         with:
           python-version: "3.10"
 
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\AppData\Local\pip\Cache
+          key: pip-${{ runner.os }}-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            pip-${{ runner.os }}-
       - name: Install CUDA build tools
         shell: cmd
         run: |
@@ -114,38 +126,11 @@ jobs:
           pip install ninja
           pip install scikit-build-core
 
-      # Cài CUDA Toolkit 11.8
       - name: Install CUDA 11.8
         uses: Jimver/cuda-toolkit@v0.2.21
         with:
           cuda: "11.8.0"
 
-      - name: Clone llama-cpp-python
-        shell: cmd
-        run: |
-          git clone --recursive --branch v0.3.25 https://github.com/abetlen/llama-cpp-python.git
-
-      - name: Build CUDA wheel
-        shell: cmd
-        working-directory: llama-cpp-python
-        env:
-          FORCE_CMAKE: 1
-          CMAKE_GENERATOR: Ninja
-          CMAKE_ARGS: -DGGML_CUDA=ON
-          FORCE_CMAKE: 1
-        run: |
-          python -m build --wheel
-      - name: Rename CUDA wheel
-        shell: powershell
-        working-directory: llama-cpp-python/dist
-        run: |
-          $wheel = Get-ChildItem *.whl | Select-Object -First 1
-          Rename-Item $wheel.Name "llama_cpp_python-0.3.25-cu118.whl"
-      - name: Upload CUDA wheel
-        uses: actions/upload-artifact@v4
-        with:
-          name: llama-cpp-python-cu118
-          path: llama-cpp-python/dist/llama_cpp_python-0.3.25-cu118.whl
       - name: Show CUDA Environment
         shell: cmd
         run: |
@@ -155,14 +140,35 @@ jobs:
           ninja --version
           nvcc --version
           cl
-      - name: Cache pip
-        uses: actions/cache@v4
+
+      - name: Clone llama-cpp-python
+        shell: cmd
+        run: |
+          git clone --recursive --depth 1 --branch v0.3.25 https://github.com/abetlen/llama-cpp-python.git
+
+      - name: Build CUDA
+        shell: cmd
+        working-directory: llama-cpp-python
+        env:
+          FORCE_CMAKE: 1
+          CMAKE_GENERATOR: Ninja
+          CMAKE_ARGS: >
+            -DGGML_CUDA=ON
+        run: |
+          python -m build --wheel
+
+      - name: Rename CUDA wheel
+        shell: powershell
+        working-directory: llama-cpp-python/dist
+        run: |
+          $wheel = Get-ChildItem *.whl | Select-Object -First 1
+          Rename-Item $wheel.Name "llama_cpp_python-0.3.25-cu118.whl"
+
+      - name: Upload CUDA wheel
+        uses: actions/upload-artifact@v4
         with:
-          path: |
-            ~\AppData\Local\pip\Cache
-          key: pip-${{ runner.os }}-${{ hashFiles('**/pyproject.toml') }}
-          restore-keys: |
-            pip-${{ runner.os }}-
+          name: llama-cpp-python-cu118
+          path: llama-cpp-python/dist/llama_cpp_python-0.3.25-cu118.whl
 
   release:
 
@@ -178,7 +184,6 @@ jobs:
 
     permissions:
       contents: write
-
     steps:
 
       - name: Download CPU Artifact
@@ -193,10 +198,12 @@ jobs:
           name: llama-cpp-python-cu118
           path: release
 
-      - name: Show Files
-        run: ls -R release
+      - name: Show Release Files
+        shell: bash
+        run: |
+          ls -lah release
 
-      - name: Create Release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
