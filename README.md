@@ -1,0 +1,2 @@
+# DICHVB
+Offline Subtitle Translator
